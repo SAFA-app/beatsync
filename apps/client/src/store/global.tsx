@@ -66,6 +66,7 @@ export const AudioSourceStateSchema = z.discriminatedUnion("status", [
   z.object({
     source: AudioSourceSchema,
     status: z.literal("loading"),
+    loadingTrackUrl: z.string().optional(),
     /** Bytes downloaded so far */
     loadedBytes: z.number().optional(),
     /** Total bytes (from Content-Length) */
@@ -75,6 +76,7 @@ export const AudioSourceStateSchema = z.discriminatedUnion("status", [
     source: AudioSourceSchema,
     status: z.literal("loaded"),
     buffer: z.custom<AudioBuffer>(),
+    loadedTrackUrl: z.string().optional(),
   }),
   z.object({
     source: AudioSourceSchema,
@@ -92,6 +94,7 @@ interface GlobalStateValues {
   isInitingSystem: boolean;
   hasUserStartedSystem: boolean; // Track if user has clicked "Start System" at least once
   selectedAudioUrl: string;
+  selectedTrackBySource: Record<string, string>;
 
   // Websocket
   socket: WebSocket | null;
@@ -171,6 +174,7 @@ interface GlobalState extends GlobalStateValues {
   reorderClient: (clientId: string) => void;
   setAdminStatus: (clientId: string, isAdmin: boolean) => void;
   changeAudioSource: (url: string) => boolean;
+  selectAudioTrack: (sourceUrl: string, trackUrl: string) => void;
   findAudioIndexByUrl: (url: string) => number | null;
   schedulePlay: (data: { trackTimeSeconds: number; targetServerTime: number; audioSource: string }) => void;
   schedulePause: (data: { targetServerTime: number }) => void;
@@ -247,6 +251,7 @@ const initialState: GlobalStateValues = {
   playbackStartTime: 0,
   playbackOffset: 0,
   selectedAudioUrl: "",
+  selectedTrackBySource: {},
 
   // Spatial audio
   isShuffled: false,
@@ -440,15 +445,18 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
   // Load audio buffer for a source
   const loadAudioSource = async (url: string) => {
+    const initialSource = get().audioSources.find((as) => as.source.url === url);
+    const initialSelection = get().selectedTrackBySource[url];
+    const trackUrl = initialSource?.source.tracks?.find((track) => track.url === initialSelection)?.url ?? url;
     try {
       const state = get();
       const existing = state.audioSources.find((as) => as.source.url === url);
 
       // Skip if already loaded or in-flight
-      if (existing && existing.status === "loading") {
+      if (existing && existing.status === "loading" && existing.loadingTrackUrl === trackUrl) {
         return;
       }
-      if (existing && existing.status === "loaded") {
+      if (existing && existing.status === "loaded" && existing.loadedTrackUrl === trackUrl) {
         // Update LRU queue when accessing an already loaded buffer
         addURLToLRU(url);
 
@@ -466,31 +474,52 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       // Mark as loading
       set((currentState) => ({
         audioSources: currentState.audioSources.map((as) =>
-          as.source.url === url ? { ...as, status: "loading" } : as
+          as.source.url === url ? { ...as, status: "loading", loadingTrackUrl: trackUrl } : as
         ),
       }));
 
       let lastReportedBytes = 0;
       const PROGRESS_THRESHOLD = 100 * 1024; // Report every ~100KB
       const { audioBuffer } = await downloadBufferFromURL({
-        url,
+        url: trackUrl,
         onProgress: (loaded, total) => {
           if (loaded - lastReportedBytes < PROGRESS_THRESHOLD && loaded < total) return;
           lastReportedBytes = loaded;
           set((currentState) => ({
             audioSources: currentState.audioSources.map((as) =>
-              as.source.url === url && as.status === "loading" ? { ...as, loadedBytes: loaded, totalBytes: total } : as
+              as.source.url === url && as.status === "loading" && as.loadingTrackUrl === trackUrl
+                ? { ...as, loadedBytes: loaded, totalBytes: total }
+                : as
             ),
           }));
         },
       });
 
+      const currentSource = get().audioSources.find((as) => as.source.url === url);
+      const currentTrackUrl =
+        currentSource?.source.tracks?.find((track) => track.url === get().selectedTrackBySource[url])?.url ?? url;
+      if (
+        currentTrackUrl !== trackUrl ||
+        currentSource?.status !== "loading" ||
+        currentSource.loadingTrackUrl !== trackUrl
+      ) {
+        return;
+      }
+
       // Update the source with loaded buffer
       set((currentState) => ({
         audioSources: currentState.audioSources.map((as) =>
-          as.source.url === url ? { ...as, status: "loaded", buffer: audioBuffer } : as
+          as.source.url === url
+            ? { source: as.source, status: "loaded", buffer: audioBuffer, loadedTrackUrl: trackUrl }
+            : as
         ),
       }));
+      if (get().selectedAudioUrl === url) {
+        set((currentState) => ({
+          duration: audioBuffer.duration,
+          currentTime: Math.min(currentState.currentTime, audioBuffer.duration),
+        }));
+      }
 
       // Update LRU queue after successfully loading a new buffer
       addURLToLRU(url);
@@ -509,7 +538,9 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       // Update the source with error status
       set((currentState) => ({
         audioSources: currentState.audioSources.map((as) =>
-          as.source.url === url ? { ...as, status: "error", error: String(error) } : as
+          as.source.url === url && as.status === "loading" && as.loadingTrackUrl === trackUrl
+            ? { source: as.source, status: "error", error: String(error) }
+            : as
         ),
       }));
     }
@@ -733,6 +764,54 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       // Return the previous playing state for the skip functions to use
       return wasPlaying;
+    },
+
+    selectAudioTrack: (sourceUrl, trackUrl) => {
+      const state = get();
+      const sourceState = state.audioSources.find((item) => item.source.url === sourceUrl);
+      const track = sourceState?.source.tracks?.find((item) => item.url === trackUrl);
+      if (!sourceState?.source.tracks || !track || state.selectedTrackBySource[sourceUrl] === trackUrl) return;
+
+      const wasPlaying = state.isPlaying && state.selectedAudioUrl === sourceUrl;
+      const position = wasPlaying ? state.getCurrentTrackPosition() : 0;
+      const selectionContextTime = state.audioPlayer?.audioContext.currentTime ?? 0;
+      if (wasPlaying && state.audioPlayer) {
+        try {
+          state.audioPlayer.sourceNode.stop();
+        } catch {
+          // The source may already have stopped.
+        }
+      }
+
+      set((currentState) => ({
+        selectedTrackBySource: { ...currentState.selectedTrackBySource, [sourceUrl]: trackUrl },
+        ...(wasPlaying ? { isPlaying: false, currentTime: position } : {}),
+        audioSources: currentState.audioSources.map((item) =>
+          item.source.url === sourceUrl && !(item.status === "loaded" && item.loadedTrackUrl === trackUrl)
+            ? { source: item.source, status: "idle" }
+            : item
+        ),
+      }));
+
+      void loadAudioSource(sourceUrl).then(() => {
+        const currentState = get();
+        const currentSource = currentState.audioSources.find((item) => item.source.url === sourceUrl);
+        if (
+          wasPlaying &&
+          currentState.selectedAudioUrl === sourceUrl &&
+          currentState.selectedTrackBySource[sourceUrl] === trackUrl &&
+          currentSource?.status === "loaded" &&
+          currentSource.loadedTrackUrl === trackUrl
+        ) {
+          const audioIndex = currentState.findAudioIndexByUrl(sourceUrl);
+          if (audioIndex !== null) {
+            const elapsedWhileLoading = currentState.audioPlayer
+              ? Math.max(0, currentState.audioPlayer.audioContext.currentTime - selectionContextTime)
+              : 0;
+            void currentState.playAudio({ offset: position + elapsedWhileLoading, when: 0, audioIndex });
+          }
+        }
+      });
     },
 
     findAudioIndexByUrl: (url: string) => {
@@ -1467,7 +1546,12 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
       const existingByUrl = new Map(state.audioSources.map((as) => [as.source.url, as]));
       const newAudioSources: AudioSourceState[] = sources.map((source) => {
         const existing = existingByUrl.get(source.url);
-        if (existing) {
+        const selectedTrackUrl =
+          source.tracks?.find((track) => track.url === state.selectedTrackBySource[source.url])?.url ?? source.url;
+        if (
+          existing &&
+          (existing.status !== "loaded" || !existing.loadedTrackUrl || existing.loadedTrackUrl === selectedTrackUrl)
+        ) {
           return existing;
         }
         return {
@@ -1478,6 +1562,13 @@ export const useGlobalStore = create<GlobalState>((set, get) => {
 
       // Update state immediately to show all sources (with idle states) and cleaned queue
       set({ audioSources: newAudioSources, bufferAccessQueue: newQueue });
+
+      const selectedTrackBySource: Record<string, string> = {};
+      for (const source of sources) {
+        const selectedTrack = source.tracks?.find((track) => track.url === state.selectedTrackBySource[source.url]);
+        if (selectedTrack) selectedTrackBySource[source.url] = selectedTrack.url;
+      }
+      set({ selectedTrackBySource });
 
       // If currentAudioSource is provided from server, update selectedAudioUrl and start loading it
       if (currentAudioSource) {

@@ -26,6 +26,16 @@ mockR2();
 void mock.module("@/demo", () => ({
   IS_DEMO_MODE: true,
   AUDIO_FILENAMES: ["demo-track.mp3"],
+  DEMO_AUDIO_SOURCES: [
+    {
+      name: "Demo multitrack",
+      url: "/audio/demo-track.mp3",
+      tracks: [
+        { name: "demo-track", url: "/audio/demo-track.mp3" },
+        { name: "vocals", url: "/audio/vocals.mp3" },
+      ],
+    },
+  ],
   AUDIO_FILE_CACHE: new Map([["demo-track.mp3", new Uint8Array(0)]]),
   isValidAdminSecret: () => true,
 }));

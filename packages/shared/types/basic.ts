@@ -14,9 +14,35 @@ export const PositionSchema = z.object({
 });
 export type PositionType = z.infer<typeof PositionSchema>;
 
-export const AudioSourceSchema = z.object({
+export const AudioTrackSchema = z.object({
+  name: z.string(),
   url: z.string(),
 });
+export type AudioTrackType = z.infer<typeof AudioTrackSchema>;
+
+export const AudioSourceSchema = z
+  .object({
+    url: z.string(),
+    name: z.string().optional(),
+    tracks: z.array(AudioTrackSchema).min(2).optional(),
+  })
+  .superRefine((source, context) => {
+    if (!source.tracks) return;
+    if (source.tracks[0].url !== source.url) {
+      context.addIssue({
+        code: "custom",
+        message: "A multitrack source URL must match its first track",
+        path: ["url"],
+      });
+    }
+    if (new Set(source.tracks.map((track) => track.url)).size !== source.tracks.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Multitrack file URLs must be unique",
+        path: ["tracks"],
+      });
+    }
+  });
 export type AudioSourceType = z.infer<typeof AudioSourceSchema>;
 
 export const ChatMessageSchema = z.object({

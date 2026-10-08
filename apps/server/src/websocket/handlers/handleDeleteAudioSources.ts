@@ -41,29 +41,26 @@ export const handleDeleteAudioSources: HandlerFunction<ExtractWSRequestFrom["DEL
   const successfullyDeletedUrls = new Set<string>();
   const roomPrefix = `/room-${ws.data.roomId}/`;
 
-  // Process R2 deletions and track successes
-  const r2DeletionPromises = urlsToDelete.map(async (url) => {
-    // Always add non-R2 URLs (like default tracks) to successful list
-    if (!url.includes(roomPrefix)) {
-      successfullyDeletedUrls.add(url); // Just say we've processed it
-      return;
-    }
-
-    // Otherwise we need to actually delete the file from R2
-    try {
-      const key = extractKeyFromUrl(url);
-
-      if (!key) {
-        throw new Error(`Failed to extract key from URL: ${url}`);
-      }
-
-      await deleteObject(key);
-      console.log(`🗑️ Deleted R2 object: ${key}`);
-      successfullyDeletedUrls.add(url);
-    } catch (error) {
-      console.error(`Failed to delete R2 object for URL ${url}:`, error);
-      // Don't add to successfullyDeletedUrls - keep in room state
-    }
+  const sourcesToDelete = room.getAudioSources().filter((source) => urlsToDelete.includes(source.url));
+  const r2DeletionPromises = sourcesToDelete.map(async (source) => {
+    const fileUrls = source.tracks?.map((track) => track.url) ?? [source.url];
+    const results = await Promise.all(
+      fileUrls.map(async (url) => {
+        if (!url.includes(roomPrefix)) return true;
+        try {
+          const key = extractKeyFromUrl(url);
+          if (!key) throw new Error(`Failed to extract key from URL: ${url}`);
+          await deleteObject(key);
+          console.log(`🗑️ Deleted R2 object: ${key}`);
+          return true;
+        } catch (error) {
+          console.error(`Failed to delete R2 object for URL ${url}:`, error);
+          return false;
+        }
+      })
+    );
+    if (results.every(Boolean)) successfullyDeletedUrls.add(source.url);
+    else console.error(`Could not delete every file in audio source ${source.url}; keeping it in the queue`);
   });
 
   // Wait for all R2 deletion attempts to complete

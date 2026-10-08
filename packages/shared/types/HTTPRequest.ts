@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AudioSourceSchema } from "./basic";
+import { AudioSourceSchema, AudioTrackSchema } from "./basic";
 import { ClientDataSchema } from "./WSBroadcast";
 
 // Legacy upload schema (deprecated)
@@ -31,11 +31,30 @@ export const UploadUrlResponseSchema = z.object({
 export type UploadUrlResponseType = z.infer<typeof UploadUrlResponseSchema>;
 
 // Upload Complete Request - simplified to only essential fields
-export const UploadCompleteSchema = z.object({
-  roomId: z.string(),
-  originalName: z.string(),
-  publicUrl: z.string().url(),
-});
+export const UploadCompleteSchema = z
+  .object({
+    roomId: z.string(),
+    originalName: z.string(),
+    publicUrl: z.string().url(),
+    tracks: z.array(AudioTrackSchema).min(2).optional(),
+  })
+  .superRefine((request, context) => {
+    if (!request.tracks) return;
+    if (request.tracks[0].url !== request.publicUrl) {
+      context.addIssue({
+        code: "custom",
+        message: "The public URL must match the first multitrack file",
+        path: ["publicUrl"],
+      });
+    }
+    if (new Set(request.tracks.map((track) => track.url)).size !== request.tracks.length) {
+      context.addIssue({
+        code: "custom",
+        message: "Multitrack file URLs must be unique",
+        path: ["tracks"],
+      });
+    }
+  });
 export type UploadCompleteType = z.infer<typeof UploadCompleteSchema>;
 
 // Upload Complete Response

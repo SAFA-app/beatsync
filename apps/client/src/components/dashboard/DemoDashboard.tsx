@@ -62,11 +62,39 @@ const DemoTrackSelector = () => {
                 : "text-neutral-400 bg-neutral-800 hover:bg-neutral-700 hover:text-neutral-200"
             )}
           >
-            {extractFileNameFromUrl(source.source.url)}
+            {source.source.name || extractFileNameFromUrl(source.source.url)}
           </button>
         );
       })}
     </div>
+  );
+};
+
+const DemoMultitrackSelector = () => {
+  const source = useGlobalStore((state) =>
+    state.audioSources.find((item) => item.source.url === state.selectedAudioUrl)
+  );
+  const selectedTrackBySource = useGlobalStore((state) => state.selectedTrackBySource);
+  const selectAudioTrack = useGlobalStore((state) => state.selectAudioTrack);
+
+  if (!source?.source.tracks) return null;
+
+  return (
+    <label className="flex items-center justify-center gap-2 text-xs text-neutral-400">
+      <span>Track</span>
+      <select
+        aria-label="Choose your track"
+        value={selectedTrackBySource[source.source.url] ?? source.source.tracks[0].url}
+        onChange={(event) => selectAudioTrack(source.source.url, event.target.value)}
+        className="max-w-48 rounded bg-neutral-900 px-2 py-1.5 text-xs text-neutral-300 outline-none focus:ring-1 focus:ring-primary-500"
+      >
+        {source.source.tracks.map((track) => (
+          <option key={track.url} value={track.url}>
+            {track.name}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 };
 
@@ -139,6 +167,10 @@ export const DemoDashboard = ({ roomId }: DemoDashboardProps) => {
                 <BeatPill />
               </div>
             )}
+          </div>
+
+          <div className="shrink-0 px-6 pb-4 flex justify-center">
+            <DemoMultitrackSelector />
           </div>
 
           {isAdmin && (

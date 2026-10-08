@@ -1,6 +1,6 @@
 "use client";
 
-import { uploadAudioFile } from "@/lib/api";
+import { uploadAudioFile, uploadMultiTrack } from "@/lib/api";
 import { cn, trimFileName } from "@/lib/utils";
 import { useCanMutate } from "@/store/global";
 import { useRoomStore } from "@/store/room";
@@ -17,25 +17,25 @@ export const AudioUploaderMinimal = () => {
 
   const isDisabled = !canMutate;
 
-  const handleFileUpload = async (file: File) => {
+  const handleFileUpload = async (files: File[]) => {
     if (isDisabled) return;
 
-    // Store file name for display
-    setFileName(file.name);
+    const isMultiTrack = files.length > 1;
+    setFileName(isMultiTrack ? `${files.length} tracks` : files[0].name);
 
     try {
       setIsUploading(true);
 
-      // Upload the file to the server as binary
-      await uploadAudioFile({
-        file,
-        roomId,
-      });
+      if (isMultiTrack) {
+        await uploadMultiTrack({ files, roomId });
+      } else {
+        await uploadAudioFile({ file: files[0], roomId });
+      }
 
       setTimeout(() => setFileName(null), 3000);
     } catch (err) {
       console.error("Error during upload:", err);
-      toast.error("Failed to upload audio file");
+      toast.error(isMultiTrack ? "Failed to upload multitrack" : "Failed to upload audio file");
       setFileName(null);
     } finally {
       setIsUploading(false);
@@ -44,9 +44,14 @@ export const AudioUploaderMinimal = () => {
 
   const onInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (isDisabled) return;
-    const file = event.target.files?.[0];
-    if (!file) return;
-    handleFileUpload(file);
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    if (!files.length) return;
+    if (files.some((file) => !isAudioFile(file))) {
+      toast.error("Please select audio files only");
+      return;
+    }
+    handleFileUpload(files);
   };
 
   const onDragOver = (event: React.DragEvent<HTMLDivElement>) => {
@@ -69,16 +74,18 @@ export const AudioUploaderMinimal = () => {
     event.stopPropagation();
     setIsDragging(false);
 
-    const file = event.dataTransfer?.files?.[0];
-    if (!file) return;
-    // make sure we only allow audio files
-    if (!file.type.startsWith("audio/")) {
-      toast.error("Please select an audio file");
+    const files = Array.from(event.dataTransfer?.files ?? []);
+    if (!files.length) return;
+    if (files.some((file) => !isAudioFile(file))) {
+      toast.error("Please select audio files only");
       return;
     }
 
-    handleFileUpload(file);
+    handleFileUpload(files);
   };
+
+  const isAudioFile = (file: File) =>
+    file.type.startsWith("audio/") || /\.(mp3|wav|m4a|aac|ogg|webm|flac)$/i.test(file.name);
 
   return (
     <div
@@ -106,11 +113,11 @@ export const AudioUploaderMinimal = () => {
           </div>
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium text-white truncate">
-              {isUploading ? "Uploading..." : fileName ? trimFileName(fileName) : "Upload audio"}
+              {isUploading ? "Uploading..." : fileName ? trimFileName(fileName) : "Upload audio or multitrack"}
             </div>
             {!isUploading && !fileName && (
               <div className={cn("text-xs truncate", isDisabled ? "text-neutral-500" : "text-neutral-400")}>
-                {isDisabled ? "Must be an admin to upload" : "Add music to queue"}
+                {isDisabled ? "Must be an admin to upload" : "Add one file or select multiple tracks"}
               </div>
             )}
           </div>
@@ -120,6 +127,7 @@ export const AudioUploaderMinimal = () => {
       <input
         id="audio-upload"
         type="file"
+        multiple
         accept="audio/mpeg,audio/mp3,audio/wav,audio/aac,audio/ogg,audio/webm,audio/flac,.mp3,.wav,.m4a,.aac,.ogg,.webm,.flac"
         onChange={onInputChange}
         disabled={isUploading || isDisabled}

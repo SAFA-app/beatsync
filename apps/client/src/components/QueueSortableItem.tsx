@@ -28,7 +28,9 @@ export const QueueSortableItem = ({
 }) => {
   const getAudioDuration = useGlobalStore((state) => state.getAudioDuration);
   const selectedAudioUrl = useGlobalStore((state) => state.selectedAudioUrl);
+  const selectedTrackBySource = useGlobalStore((state) => state.selectedTrackBySource);
   const changeAudioSource = useGlobalStore((state) => state.changeAudioSource);
+  const selectAudioTrack = useGlobalStore((state) => state.selectAudioTrack);
   const broadcastPlay = useGlobalStore((state) => state.broadcastPlay);
   const broadcastPause = useGlobalStore((state) => state.broadcastPause);
   const isPlaying = useGlobalStore((state) => state.isPlaying);
@@ -237,9 +239,24 @@ export const QueueSortableItem = ({
               isLoading && "opacity-60"
             )}
           >
-            {extractFileNameFromUrl(sourceState.source.url)}
+            {sourceState.source.name || extractFileNameFromUrl(sourceState.source.url)}
             {isError && sourceState.error && <span className="text-xs text-red-400 ml-2">({sourceState.error})</span>}
           </div>
+          {sourceState.source.tracks && (
+            <select
+              aria-label="Choose your track"
+              value={selectedTrackBySource[sourceState.source.url] ?? sourceState.source.tracks[0].url}
+              onClick={(event) => event.stopPropagation()}
+              onChange={(event) => selectAudioTrack(sourceState.source.url, event.target.value)}
+              className="mt-1 max-w-full rounded bg-neutral-900 px-2 py-1 text-xs text-neutral-300 outline-none focus:ring-1 focus:ring-primary-500"
+            >
+              {sourceState.source.tracks.map((track) => (
+                <option key={track.url} value={track.url}>
+                  {track.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Duration & Delete Button */}

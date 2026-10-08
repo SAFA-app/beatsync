@@ -1,4 +1,4 @@
-import { AUDIO_FILENAMES, IS_DEMO_MODE } from "@/demo";
+import { DEMO_AUDIO_SOURCES, IS_DEMO_MODE } from "@/demo";
 import { RoomManager } from "@/managers/RoomManager";
 import type { DiscoverRoomsType } from "@beatsync/shared";
 
@@ -35,8 +35,8 @@ export class GlobalManager {
         () => this.scheduleRoomCleanup(roomId)
       );
       if (IS_DEMO_MODE) {
-        for (const filename of AUDIO_FILENAMES) {
-          room.addAudioSource({ url: `/audio/${encodeURIComponent(filename)}` });
+        for (const source of DEMO_AUDIO_SOURCES) {
+          room.addAudioSource(source);
         }
       }
       this.rooms.set(roomId, room);

@@ -34,12 +34,18 @@ export class BackupManager {
     try {
       const room = globalManager.getOrCreateRoom(roomId);
 
-      // Concurrently validate all audio sources in R2 (no limit on concurrency)
-      const validationPromises = roomData.audioSources.map((source) => validateAudioFileExists(source.url));
+      // Validate every file in a multitrack before restoring the group.
+      const sourceFiles = roomData.audioSources.map((source) => source.tracks?.map((track) => track.url) ?? [source.url]);
+      const validationPromises = sourceFiles.flat().map((url) => validateAudioFileExists(url));
       const validationResults = await Promise.all(validationPromises);
 
-      // Filter out audio sources that are not valid
-      const validAudioSources = roomData.audioSources.filter((_, index) => validationResults[index]);
+      let validationIndex = 0;
+      const validSources = sourceFiles.map((fileUrls) => {
+        const isValid = validationResults.slice(validationIndex, validationIndex + fileUrls.length).every(Boolean);
+        validationIndex += fileUrls.length;
+        return isValid;
+      });
+      const validAudioSources = roomData.audioSources.filter((_, index) => validSources[index]);
 
       // Restore audio sources
       room.setAudioSources(validAudioSources);
